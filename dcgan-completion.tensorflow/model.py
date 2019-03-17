@@ -16,6 +16,8 @@ from six.moves import xrange
 from ops import *
 from utils import *
 
+import pdb
+
 SUPPORTED_EXTENSIONS = ["png", "jpg", "jpeg"]
 
 def dataset_files(root):
@@ -194,15 +196,20 @@ Initializing a new one.
 
 """)
 
+        print("starting to train")
         for epoch in xrange(config.epoch):
+            print("epoch", epoch)
+            #pdb.set_trace()
             data = dataset_files(config.dataset)
             batch_idxs = min(len(data), config.train_size) // self.batch_size
 
             for idx in xrange(0, batch_idxs):
+                print("idx", idx)
                 batch_files = data[idx*config.batch_size:(idx+1)*config.batch_size]
                 batch = [get_image(batch_file, self.image_size, is_crop=self.is_crop)
                          for batch_file in batch_files]
                 batch_images = np.array(batch).astype(np.float32)
+                print("batch_images.shape =", batch_images.shape)
 
                 batch_z = np.random.uniform(-1, 1, [config.batch_size, self.z_dim]) \
                             .astype(np.float32)
@@ -211,6 +218,7 @@ Initializing a new one.
                 _, summary_str = self.sess.run([d_optim, self.d_sum],
                     feed_dict={ self.images: batch_images, self.z: batch_z, self.is_training: True })
                 self.writer.add_summary(summary_str, counter)
+                print("after updating D network")
 
                 # Update G network
                 _, summary_str = self.sess.run([g_optim, self.g_sum],
