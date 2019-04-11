@@ -1,0 +1,2 @@
+model_checkpoint_path: "/home/xli/Desktop/class/project/11785_project/glow/logs/model_best_loss.ckpt"
+all_model_checkpoint_paths: "/home/xli/Desktop/class/project/11785_project/glow/logs/model_best_loss.ckpt"
