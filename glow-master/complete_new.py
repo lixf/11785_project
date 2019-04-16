@@ -14,6 +14,184 @@ from utils_complete import *
 learn = tf.contrib.learn
 
 
+class GlowModel(object):
+
+    def __init__(self, sess, model, image_size=64,
+                 batch_size=64, sample_size=64,
+                 checkpoint_dir=None, lam=0.1):
+
+        self.image_size = image_size
+        self.batch_size = batch_size
+        self.sample_size = sample_size
+        self.lam = lam
+        self.model = model
+        self.sess = sess
+
+        self.image_shape = [self.image_size, self.image_size, 3]
+
+        self.build_model()
+
+    def build_model(self):
+
+        self.mask = tf.placeholder(tf.float32, self.image_shape, name='mask')
+        self.zhats = tf.placeholder(
+            tf.float32, [None, 4, 4, 48], name='z_values')
+        self.images = tf.placeholder(
+            tf.float32, [None] + self.image_shape, name='real_images')
+        self.is_training = tf.placeholder(tf.bool, name='is_training')
+        self.G_imgs = tf.placeholder(
+            tf.float32, [None] + self.image_shape, name='g_images')
+        self.labels = tf.placeholder(
+            tf.int32, [1], name='labels')
+
+        self.contextual_loss = tf.cast(tf.reduce_sum(
+            tf.contrib.layers.flatten(
+                tf.abs(tf.multiply(self.mask, self.G_imgs) - tf.multiply(self.mask, self.images))), 1), tf.float32)
+
+        # self.perceptual_loss = self.model.loss_complete(
+        #     self.G_imgs, np.array([0]), False, True)
+        self.perceptual_loss = tf.convert_to_tensor(self.model.loss_complete(
+            self.G_imgs, np.array([0]), False, True), dtype=tf.float32)
+
+        self.complete_loss = self.contextual_loss + self.lam * self.perceptual_loss
+        self.grad_complete_loss = tf.gradients(self.complete_loss, self.zhats, unconnected_gradients='zero')
+
+    def complete(self, config, visualise, model):
+        def make_dir(name):
+            p = os.path.join(config.outDir, name)
+            if not os.path.exists(p):
+                os.makedirs(p)
+
+        make_dir('hats_imgs')
+        make_dir('completed')
+        make_dir('logs_complete')
+
+        # image_shape = [config.imgSize, config.imgSize, 3]
+        # image_size = config.imgSize
+        # lam = 0.1
+
+        print("reahching here")
+
+        nImgs = len(config.imgs)
+        batch_size = min(64, nImgs)
+        batch_idxs = int(np.ceil(nImgs / batch_size))
+
+        mask = tf.placeholder(tf.float32, self.image_shape, name='mask')
+        zhats = tf.placeholder(tf.float32, [None, 4, 4, 48], name='z_hats')
+        images = tf.placeholder(
+            tf.float32, [None] + self.image_shape, name='real_images')
+        is_training = tf.placeholder(tf.bool, name='is_training')
+
+        if config.maskType == 'center':
+            mask = np.ones(self.image_shape)
+            sz = self.image_size
+            l = int(self.image_size * config.centerScale)
+            u = int(self.image_size * (1.0 - config.centerScale))
+            mask[l:u, l:u, :] = 0.0
+
+        for idx in range(0, batch_idxs):
+            l = idx * batch_size
+            u = min((idx + 1) * batch_size, nImgs)
+            batchSz = u - l
+            batch_files = config.imgs[l:u]
+            batch = [get_image(batch_file, self.image_size, is_crop=True)
+                     for batch_file in batch_files]
+            batch_images = np.array(batch).astype(np.float32)
+            if batchSz < batch_size:
+                padSz = ((0, int(batch_size - batchSz)),
+                         (0, 0), (0, 0), (0, 0))
+                batch_images = np.pad(batch_images, padSz, 'constant')
+                batch_images = batch_images.astype(np.float32)
+
+            G_imgs, zhats = visualise(batch_size)
+
+            m = 0
+            v = 0
+
+            masked_images = np.multiply(batch_images, mask)
+
+            for i in range(config.nIter):
+
+                if i != 0:
+                    eps_std = [.5] * batch_size
+                    G_imgs = model.convert_sample_into_image(zhats, eps_std)
+
+                #print(mask.shape, G_imgs.shape, batch_images.shape)
+
+                print("Coming here")
+
+                # contextual_loss = tf.cast(tf.reduce_sum(
+                # tf.contrib.layers.flatten(
+                # tf.abs(tf.multiply(mask, G_imgs) - tf.multiply(mask,
+                # batch_images))), 1), tf.float32)
+
+                # perceptual_loss = tf.convert_to_tensor(model.f_loss_complete(
+                # G_imgs, np.array([0]), False, True), dtype=tf.float32)
+
+                # complete_loss = contextual_loss + lam * perceptual_loss
+                # grad_complete_loss = tf.gradients(complete_loss, zhats)
+
+                fd = {
+                    self.zhats: zhats,
+                    self.mask: mask,
+                    self.images: batch_images,
+                    self.G_imgs: G_imgs
+                }
+
+
+                #self.zhats = tf.Print(self.zhats,[self.zhats],"tensorflow")
+                #print("Hpts shape",self.zhats)
+
+                run = [self.complete_loss, self.grad_complete_loss]
+                loss, g = self.sess.run(run, feed_dict=fd)
+                print("Loss is",g[0])
+
+                # a = tf.ones([1, 2])
+                # b = tf.ones([3, 1])
+                # grad = tf.gradients([b], [a], unconnected_gradients='zero')
+                # self.sess.run(grad)
+                # print(grad)
+
+            
+
+
+                #grad_loss = tf.gradients(self.complete_loss, self.zhats)
+
+                # run = [self.grad_complete_loss]
+                # g = self.sess.run(run, feed_dict=fd)
+                # print("Len loss", g)
+
+
+                if i % config.outInterval == 0:
+                    print(i, np.mean(loss[0:batchSz]))
+                    imgName = os.path.join(config.outDir,
+                                           'hats_imgs/{:04d}.png'.format(i))
+                    nRows = np.ceil(batchSz / 8)
+                    nCols = min(8, batchSz)
+                    save_images(G_imgs[:batchSz, :, :, :],
+                                [nRows, nCols], imgName)
+
+                    inv_masked_hat_images = np.multiply(G_imgs, 1.0 - mask)
+                    completed = masked_images + inv_masked_hat_images
+                    imgName = os.path.join(config.outDir,
+                                           'completed/{:04d}.png'.format(i))
+                    save_images(completed[:batchSz, :, :, :],
+                                [nRows, nCols], imgName)
+
+                if config.approach == 'adam':
+                    # Optimize single completion with Adam
+                    m_prev = np.copy(m)
+                    v_prev = np.copy(v)
+                    m = config.beta1c * m_prev + (1 - config.beta1c) * g[0]
+                    v = config.beta2c * v_prev + \
+                        (1 - config.beta2c) * np.multiply(g[0], g[0])
+                    m_hat = m / (1 - config.beta1c ** (i + 1))
+                    v_hat = v / (1 - config.beta2c ** (i + 1))
+                    zhats += - np.true_divide(config.lr *
+                                              m_hat, (np.sqrt(v_hat) + config.eps))
+                # zhats = np.clip(zhats, -1, 1)
+
+
 def init_visualizations(hps, model, logdir):
 
     def sample_batch(y, eps):
@@ -39,8 +217,8 @@ def init_visualizations(hps, model, logdir):
         y = np.asarray([_y % hps.n_y for _y in (
             range(n_batch))], dtype='int32')
 
-        #y = np.asarray([0])
-        #n_batch = 1
+        # y = np.asarray([0])
+        # n_batch = 1
 
         # temperatures = [0., .25, .5, .626, .75, .875, 1.] #previously
         temperatures = [0., .25, .5, .6, .7, .8, .9, 1.]
@@ -66,63 +244,6 @@ def init_visualizations(hps, model, logdir):
         return sample_data, sample_points
 
     return draw_samples
-
-
-def complete(config, visualise):
-    def make_dir(name):
-        p = os.path.join(config.outDir, name)
-        if not os.path.exists(p):
-            os.makedirs(p)
-
-    make_dir('hats_imgs')
-    make_dir('completed')
-    make_dir('logs_complete')
-
-    image_shape = [config.imgSize, config.imgSize, 3]
-    image_size = config.imgSize
-
-    print("reahching here")
-
-    nImgs = len(config.imgs)
-    batch_size = min(64, nImgs)
-    batch_idxs = int(np.ceil(nImgs / batch_size))
-
-    mask = tf.placeholder(tf.float32, image_shape, name='mask')
-
-    if config.maskType == 'center':
-        mask = np.ones(image_shape)
-        sz = image_size
-        l = int(image_size * config.centerScale)
-        u = int(image_size * (1.0 - config.centerScale))
-        mask[l:u, l:u, :] = 0.0
-
-    for idx in range(0, batch_idxs):
-        l = idx * batch_size
-        u = min((idx + 1) * batch_size, nImgs)
-        batchSz = u - l
-        batch_files = config.imgs[l:u]
-        batch = [get_image(batch_file, image_size, is_crop=True)
-                 for batch_file in batch_files]
-        batch_images = np.array(batch).astype(np.float32)
-        if batchSz < batch_size:
-            padSz = ((0, int(batch_size - batchSz)),
-                     (0, 0), (0, 0), (0, 0))
-            batch_images = np.pad(batch_images, padSz, 'constant')
-            batch_images = batch_images.astype(np.float32)
-
-        G_imgs, zhats = visualise(batch_size)
-
-
-        print(mask.shape, G_imgs.shape, batch_images.shape)
-
-
-        contextual_loss = tf.reduce_sum(
-            tf.contrib.layers.flatten(
-                tf.abs(tf.multiply(mask, G_imgs) - tf.multiply(mask, batch_images))), 1)
-
-        print("Loss",contextual_loss.shape)
-
-
 
 
 def main(hps):
@@ -156,7 +277,11 @@ def main(hps):
     # Initialize visualization functions
     visualise = init_visualizations(hps, model, logdir)
 
-    complete(hps, visualise)
+    glow = GlowModel(sess, model, image_size=hps.imgSize,
+                     batch_size=min(64, len(hps.imgs)),
+                     checkpoint_dir=hps.checkpointDir, lam=hps.lam)
+
+    glow.complete(hps, visualise, model)
 
     # if not hps.inference:
     #     # Perform training
@@ -249,8 +374,8 @@ def tensorflow_session():
 if __name__ == "__main__":
 
     # This enables a ctr-C without triggering errors
-    #import signal
-    #signal.signal(signal.SIGINT, lambda x, y: sys.exit(0))
+    # import signal
+    # signal.signal(signal.SIGINT, lambda x, y: sys.exit(0))
 
     import argparse
     parser = argparse.ArgumentParser()
@@ -345,7 +470,7 @@ if __name__ == "__main__":
     parser.add_argument('--approach', type=str,
                         choices=['adam', 'hmc'],
                         default='adam')
-    #parser.add_argument('--lr', type=float, default=0.01)
+    # parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--beta1c', type=float, default=0.9)
     parser.add_argument('--beta2c', type=float, default=0.999)
     parser.add_argument('--eps', type=float, default=1e-8)
@@ -367,4 +492,5 @@ if __name__ == "__main__":
     parser.add_argument('imgs', type=str, nargs='+')
 
     hps = parser.parse_args()  # So error if typo
+
     main(hps)

@@ -348,6 +348,11 @@ Initializing a new one.
                 run = [self.complete_loss, self.grad_complete_loss, self.G, self.lowres_G]
                 loss, g, G_imgs, lowres_G_imgs = self.sess.run(run, feed_dict=fd)
 
+                #print(self.contextual_loss.shape, self.perceptual_loss.shape, loss.shape)
+
+                #print("Comlpete loss",type(self.contextual_loss),type(self.perceptual_loss),type(loss))
+                print("Types",loss)
+
                 for img in range(batchSz):
                     with open(os.path.join(config.outDir, 'logs/hats_{:02d}.log'.format(img)), 'ab') as f:
                         f.write('{} {} '.format(i, loss[img]).encode())

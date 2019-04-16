@@ -10,7 +10,7 @@ import math
 import json
 import random
 import pprint
-#import scipy.misc
+import scipy.misc
 import imageio
 import numpy as np
 from time import gmtime, strftime
