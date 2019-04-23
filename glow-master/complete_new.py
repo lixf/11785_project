@@ -11,7 +11,11 @@ import graphics
 from utils import ResultLogger
 from utils_complete import *
 
+from memory_saving_gradients import gradients as grad
+
 learn = tf.contrib.learn
+
+from ops import *
 
 
 class GlowModel(object):
@@ -29,20 +33,37 @@ class GlowModel(object):
 
         self.image_shape = [self.image_size, self.image_size, 3]
 
+        self.gf_dim = 64
+        log_size = int(math.log(image_size) / math.log(2))
+        self.g_bns = [
+            batch_norm(name='g_bn{}'.format(i,)) for i in range(log_size)]
+
         self.build_model()
 
     def build_model(self):
 
+        self.writer = tf.summary.FileWriter("./logs", self.sess.graph)
+
         self.mask = tf.placeholder(tf.float32, self.image_shape, name='mask')
         self.zhats = tf.placeholder(
-            tf.float32, [None, 4, 4, 48], name='z_values')
+            tf.float32, [None, 8, 8, 48], name='zhats')
+
+        #self.zhats = tf.placeholder(tf.float32, [None, 100], name='zhats')
+
         self.images = tf.placeholder(
             tf.float32, [None] + self.image_shape, name='real_images')
         self.is_training = tf.placeholder(tf.bool, name='is_training')
-        self.G_imgs = tf.placeholder(
-            tf.float32, [None] + self.image_shape, name='g_images')
+        self.eps_std = tf.placeholder(tf.float32, [None], name='eps_std_comp')
+
+        self.G_imgs = self.model.f_convert_sample_into_image(
+            self.zhats, self.eps_std)
+
+        #self.G_imgs = self.generator(self.zhats)
+
         self.labels = tf.placeholder(
             tf.int32, [1], name='labels')
+
+        print(self.mask.shape, self.G_imgs.shape, self.images.shape)
 
         self.contextual_loss = tf.cast(tf.reduce_sum(
             tf.contrib.layers.flatten(
@@ -54,7 +75,8 @@ class GlowModel(object):
             self.G_imgs, np.array([0]), False, True), dtype=tf.float32)
 
         self.complete_loss = self.contextual_loss + self.lam * self.perceptual_loss
-        self.grad_complete_loss = tf.gradients(self.complete_loss, self.zhats, unconnected_gradients='zero')
+        self.grad_complete_loss = tf.gradients(
+            self.complete_loss, self.zhats)
 
     def complete(self, config, visualise, model):
         def make_dir(name):
@@ -70,17 +92,21 @@ class GlowModel(object):
         # image_size = config.imgSize
         # lam = 0.1
 
+        try:
+            tf.global_variables_initializer().run(session=self.sess)
+        except:
+            tf.initialize_all_variables().run()
         print("reahching here")
 
         nImgs = len(config.imgs)
         batch_size = min(64, nImgs)
         batch_idxs = int(np.ceil(nImgs / batch_size))
 
-        mask = tf.placeholder(tf.float32, self.image_shape, name='mask')
-        zhats = tf.placeholder(tf.float32, [None, 4, 4, 48], name='z_hats')
-        images = tf.placeholder(
-            tf.float32, [None] + self.image_shape, name='real_images')
-        is_training = tf.placeholder(tf.bool, name='is_training')
+        #mask = tf.placeholder(tf.float32, self.image_shape, name='mask')
+        #zhats = tf.placeholder(tf.float32, [None, 4, 4, 48], name='z_hats')
+        # images = tf.placeholder(
+        #    tf.float32, [None] + self.image_shape, name='real_images')
+        #is_training = tf.placeholder(tf.bool, name='is_training')
 
         if config.maskType == 'center':
             mask = np.ones(self.image_shape)
@@ -94,31 +120,38 @@ class GlowModel(object):
             u = min((idx + 1) * batch_size, nImgs)
             batchSz = u - l
             batch_files = config.imgs[l:u]
+
+            print("Batching here", self.image_size)
             batch = [get_image(batch_file, self.image_size, is_crop=True)
                      for batch_file in batch_files]
+            print("Batching here", batch[0].shape)
             batch_images = np.array(batch).astype(np.float32)
             if batchSz < batch_size:
                 padSz = ((0, int(batch_size - batchSz)),
                          (0, 0), (0, 0), (0, 0))
                 batch_images = np.pad(batch_images, padSz, 'constant')
                 batch_images = batch_images.astype(np.float32)
+            batch_images = self.postprocess(batch_images)
 
-            G_imgs, zhats = visualise(batch_size)
+            #zhats = visualise(batch_size)
+            #zhats = np.random.uniform(-1, 1, size=(3, 100))
+            zhats = np.random.uniform(-1, 1, size=(3, 8, 8, 48))
 
             m = 0
             v = 0
 
+            #print("Batch images",batch_images.shape, mask.shape)
             masked_images = np.multiply(batch_images, mask)
 
             for i in range(config.nIter):
 
-                if i != 0:
-                    eps_std = [.5] * batch_size
-                    G_imgs = model.convert_sample_into_image(zhats, eps_std)
+                # if i != 0:
+                #     eps_std = [.5] * batch_size
+                #     G_imgs = model.convert_sample_into_image(zhats, eps_std)
 
                 #print(mask.shape, G_imgs.shape, batch_images.shape)
 
-                print("Coming here")
+                #print("Coming here")
 
                 # contextual_loss = tf.cast(tf.reduce_sum(
                 # tf.contrib.layers.flatten(
@@ -135,16 +168,16 @@ class GlowModel(object):
                     self.zhats: zhats,
                     self.mask: mask,
                     self.images: batch_images,
-                    self.G_imgs: G_imgs
+                    self.eps_std: [.5] * batch_size
+                    # self.G_imgs: G_imgs
                 }
-
 
                 #self.zhats = tf.Print(self.zhats,[self.zhats],"tensorflow")
                 #print("Hpts shape",self.zhats)
 
-                run = [self.complete_loss, self.grad_complete_loss]
-                loss, g = self.sess.run(run, feed_dict=fd)
-                print("Loss is",g[0])
+                run = [self.complete_loss, self.grad_complete_loss, self.G_imgs]
+                loss, g, G_imgs = self.sess.run(run, feed_dict=fd)
+                print("Loss is", g[0])
 
                 # a = tf.ones([1, 2])
                 # b = tf.ones([3, 1])
@@ -152,15 +185,11 @@ class GlowModel(object):
                 # self.sess.run(grad)
                 # print(grad)
 
-            
-
-
                 #grad_loss = tf.gradients(self.complete_loss, self.zhats)
 
                 # run = [self.grad_complete_loss]
                 # g = self.sess.run(run, feed_dict=fd)
                 # print("Len loss", g)
-
 
                 if i % config.outInterval == 0:
                     print(i, np.mean(loss[0:batchSz]))
@@ -191,6 +220,53 @@ class GlowModel(object):
                                               m_hat, (np.sqrt(v_hat) + config.eps))
                 # zhats = np.clip(zhats, -1, 1)
 
+    def postprocess(self, x):
+        n_bins = 256
+        return np.clip(((x + 0.5) * 256), 0, 255)
+
+    def generator(self, z):
+        with tf.variable_scope("generator") as scope:
+
+            a_as_vector = tf.reshape(z, [-1])
+            zero_padding = tf.zeros(
+                [3 * 64 * 64 * 3] - tf.shape(a_as_vector), dtype=z.dtype)
+            a_padded = tf.concat([a_as_vector, zero_padding], 0)
+            result = tf.reshape(a_padded, [3, 64, 64, 3])
+            return result
+
+            # z = tf.reshape(z, [3, 64, 64, 3])
+            # print("z shape", z.shape)
+            # return z
+            # self.z_, self.h0_w, self.h0_b = linear(
+            #     z, self.gf_dim * 8 * 4 * 4, 'g_h0_lin', with_w=True)
+
+            # # TODO: Nicer iteration pattern here. #readability
+            # hs = [None]
+            # hs[0] = tf.reshape(self.z_, [-1, 4, 4, self.gf_dim * 8])
+            # hs[0] = tf.nn.relu(self.g_bns[0](hs[0], True))
+
+            # i = 1  # Iteration number.
+            # depth_mul = 8  # Depth decreases as spatial component increases.
+            # size = 8  # Size increases as depth decreases.
+
+            # while size < self.image_size:
+            #     hs.append(None)
+            #     name = 'g_h{}'.format(i)
+            #     hs[i], _, _ = conv2d_transpose(hs[i - 1],
+            #                                    [self.batch_size, size, size, self.gf_dim * depth_mul], name=name, with_w=True)
+            #     hs[i] = tf.nn.relu(self.g_bns[i](hs[i], True))
+
+            #     i += 1
+            #     depth_mul //= 2
+            #     size *= 2
+
+            # hs.append(None)
+            # name = 'g_h{}'.format(i)
+            # hs[i], _, _ = conv2d_transpose(hs[i - 1],
+            #                                [self.batch_size, size, size, 3], name=name, with_w=True)
+
+            # return tf.nn.tanh(hs[i])
+
 
 def init_visualizations(hps, model, logdir):
 
@@ -200,12 +276,12 @@ def init_visualizations(hps, model, logdir):
         sample_points_list = []
 
         for i in range(int(np.ceil(len(eps) / n_batch))):
-            sample_data, sample_points = model.sample(
+            sample_points = model.sample(
                 y[i * n_batch:i * n_batch + n_batch], eps[i * n_batch:i * n_batch + n_batch])
-            sample_data_list.append(sample_data)
+            # sample_data_list.append(sample_data)
             sample_points_list.append(sample_points)
 
-        return np.concatenate(sample_data_list), np.concatenate(sample_points_list)
+        return np.concatenate(sample_points_list)
 
     def draw_samples(batch_size):
         if hvd.rank() != 0:
@@ -240,8 +316,8 @@ def init_visualizations(hps, model, logdir):
         #     graphics.save_raster(x_sample, logdir +
         #                          'epoch_{}_sample_{}.png'.format(epoch, i))
 
-        sample_data, sample_points = sample_batch(y, [.5] * n_batch)
-        return sample_data, sample_points
+        sample_points = sample_batch(y, [.5] * n_batch)
+        return sample_points
 
     return draw_samples
 
@@ -276,6 +352,9 @@ def main(hps):
 
     # Initialize visualization functions
     visualise = init_visualizations(hps, model, logdir)
+
+    #zhats = visualise(3)
+    #print("Hats here",zhats.shape)
 
     glow = GlowModel(sess, model, image_size=hps.imgSize,
                      batch_size=min(64, len(hps.imgs)),
@@ -388,7 +467,7 @@ if __name__ == "__main__":
                         default='./logs', help="Location to save logs")
 
     # Dataset hyperparams:
-    parser.add_argument("--problem", type=str, default='cifar10',
+    parser.add_argument("--problem", type=str, default='celeba',
                         help="Problem (mnist/cifar10/imagenet")
     parser.add_argument("--category", type=str,
                         default='', help="LSUN category")
@@ -479,7 +558,7 @@ if __name__ == "__main__":
     parser.add_argument('--hmcL', type=int, default=100)
     parser.add_argument('--hmcAnneal', type=float, default=1)
     parser.add_argument('--nIter', type=int, default=1000)
-    parser.add_argument('--imgSize', type=int, default=32)
+    parser.add_argument('--imgSize', type=int, default=64)
     parser.add_argument('--lam', type=float, default=0.1)
     parser.add_argument('--checkpointDir', type=str, default='checkpoint')
     parser.add_argument('--outDir', type=str, default='completions')

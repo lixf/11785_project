@@ -145,7 +145,7 @@ def model(sess, hps, train_iterator, test_iterator, data_init):
     # Only for decoding/init, rest use iterators directly
     with tf.name_scope('input'):
         X = tf.placeholder(
-            tf.uint8, [None, hps.image_size, hps.image_size, 3], name='image')
+            tf.uint8, [None, 64, 64, 3], name='image')
         Y = tf.placeholder(tf.int32, [None], name='label')
         lr = tf.placeholder(tf.float32, None, name='learning_rate')
 
@@ -160,7 +160,8 @@ def model(sess, hps, train_iterator, test_iterator, data_init):
         return x
 
     def postprocess(x):
-        return tf.cast(tf.clip_by_value(tf.floor((x + .5) * hps.n_bins) * (256. / hps.n_bins), 0, 255), 'uint8')
+        return tf.clip_by_value(((x + 0.5) * hps.n_bins), 0, 255)
+        # return tf.clip_by_value(x, 0, 255)
 
     def _f_loss(x, y, is_training, reuse=False):
 
@@ -257,18 +258,18 @@ def model(sess, hps, train_iterator, test_iterator, data_init):
 
             _, sample, _ = prior("prior", y_onehot, hps)
             sample_z = sample(eps_std=eps_std)
-            z = decoder(sample_z, eps_std=eps_std)
-            z = Z.unsqueeze2d(z, 2)  # 8x8x12 -> 16x16x3
-            x = postprocess(z)
+            # z = decoder(sample_z, eps_std=eps_std)
+            # z = Z.unsqueeze2d(z, 2)  # 8x8x12 -> 16x16x3
+            # x = postprocess(z)
 
-        return x, sample_z
+        return sample_z
 
     m.eps_std = tf.placeholder(tf.float32, [None], name='eps_std')
     x_sampled = f_sample(Y, m.eps_std)
 
     def sample(_y, _eps_std):
-        x, sample_z = m.sess.run(x_sampled, {Y: _y, m.eps_std: _eps_std})
-        return x, sample_z
+        sample_z = m.sess.run(x_sampled, {Y: _y, m.eps_std: _eps_std})
+        return sample_z
 
     m.sample = sample
 
@@ -278,16 +279,25 @@ def model(sess, hps, train_iterator, test_iterator, data_init):
             z = Z.unsqueeze2d(z, 2)  # 8x8x12 -> 16x16x3
             x = postprocess(z)
 
-        return x
+            return x
 
-    sample_z = tf.placeholder(tf.float32, [None, 4, 4, 48], name='sample_z')
-    z_samples = f_convert_sample_into_image(sample_z, m.eps_std)
+            # a_as_vector = tf.reshape(sample_z, [-1])
+            # zero_padding = tf.zeros(
+            #     [3 * 64 * 64 * 3] - tf.shape(a_as_vector), dtype=sample_z.dtype)
+            # a_padded = tf.concat([a_as_vector, zero_padding], 0)
+            # result = tf.reshape(a_padded, [3, 64, 64, 3])
+            # result = postprocess(result)
+            # return result
 
-    def convert_sample_into_image(_sample_z, _eps_std):
-        x = m.sess.run(z_samples, {sample_z: _sample_z, m.eps_std: _eps_std})
-        return x
+    # sample_z = tf.placeholder(tf.float32, [None, 4, 4, 48], name='sample_z')
+    # z_samples = f_convert_sample_into_image(sample_z, m.eps_std)
 
-    m.convert_sample_into_image = convert_sample_into_image
+    # def convert_sample_into_image(_sample_z, _eps_std):
+    #     x = m.sess.run(z_samples, {sample_z: _sample_z, m.eps_std: _eps_std})
+    #     return x
+
+    # m.convert_sample_into_image = convert_sample_into_image
+    m.f_convert_sample_into_image = f_convert_sample_into_image
 
     m.sample = sample
 

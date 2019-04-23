@@ -2,6 +2,7 @@ import os
 import tensorflow as tf
 import numpy as np
 import glob
+import scipy.misc
 
 _FILES_SHUFFLE = 1024
 _SHUFFLE_FACTOR = 4
@@ -21,8 +22,29 @@ def parse_tfrecord_tf(record, res, rnd_crop):
         # For LSUN Realnvp only - random crop
         img = tf.reshape(img, shape)
         img = tf.random_crop(img, [res, res, 3])
+
+    print("Image shape", img.shape)
     img = tf.reshape(img, [res, res, 3])
+
+    img = tf.image.resize_images(img, (64, 64))
+    print("Image resshape", img.shape)
+
+
+    #img = center_crop(img, 64)
     return img, label  # to get CelebA attr, also return attr
+
+
+def center_crop(x, crop_h, crop_w=None, resize_w=64):
+    if crop_w is None:
+        crop_w = crop_h
+    h, w = x.shape[:2]
+    h = int(h)
+    w = int(w)
+    # print("H,W",h,w,crop_h,crop_w)
+    j = int(round((h - crop_h) / 2.))
+    i = int(round((w - crop_w) / 2.))
+    return scipy.misc.imresize(x[j:j + crop_h, i:i + crop_w],
+                               [resize_w, resize_w])
 
 
 def input_fn(tfr_file, shards, rank, pmap, fmap, n_batch, resolution, rnd_crop, is_training):
@@ -48,9 +70,12 @@ def input_fn(tfr_file, shards, rank, pmap, fmap, n_batch, resolution, rnd_crop, 
 
 
 def get_tfr_file(data_dir, split, res_lg2):
+
+    # res_lg2 = 8 # for image of size 64,it has be 6
     data_dir = os.path.join(data_dir, split)
     tfr_prefix = os.path.join(data_dir, os.path.basename(data_dir))
     tfr_file = tfr_prefix + '-r%02d-s-*-of-*.tfrecords' % (res_lg2)
+    # print("Reslog2",tfr_file)
     files = glob.glob(tfr_file)
     assert len(files) == int(files[0].split(
         "-")[-1].split(".")[0]), "Not all tfrecords files present at %s" % tfr_prefix
@@ -81,6 +106,7 @@ def make_batch(sess, itr, itr_batch_size, required_batch_size):
     k = int(np.ceil(rb / ib))
     xs, ys = [], []
     data = itr.get_next()
+    #print("Shape here",data[0].shape)
     for i in range(k):
         x, y = sess.run(data)
         xs.append(x)

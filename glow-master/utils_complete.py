@@ -20,7 +20,7 @@ pp = pprint.PrettyPrinter()
 get_stddev = lambda x, k_h, k_w: 1/math.sqrt(k_w*k_h*x.get_shape()[-1])
 
 def get_image(image_path, image_size, is_crop=True):
-    return transform(imread(image_path), image_size, is_crop)
+    return imread(image_path)
 
 def save_images(images, size, image_path):
     return imsave(inverse_transform(images), size, image_path)
