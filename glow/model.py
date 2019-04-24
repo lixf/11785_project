@@ -6,6 +6,50 @@ import numpy as np
 import horovod.tensorflow as hvd
 from tensorflow.contrib.framework.python.ops import add_arg_scope
 
+import attention
+
+# TODO convert this to tensorflow
+#def attention_1(self,x):
+#    """
+#        inputs :
+#            x : input feature maps( B X C X W X H)
+#        returns :
+#            out : self attention value + input feature 
+#            attention: B X N X N (N is Width*Height)
+#    """
+#    m_batchsize,C,width ,height = x.size()
+#    proj_query  = self.query_conv(x).view(m_batchsize,-1,width*height).permute(0,2,1) # B X CX(N)
+#    proj_key =  self.key_conv(x).view(m_batchsize,-1,width*height) # B X C x (*W*H)
+#    energy =  torch.bmm(proj_query,proj_key) # transpose check
+#    attention = self.softmax(energy) # BX (N) X (N) 
+#    proj_value = self.value_conv(x).view(m_batchsize,-1,width*height) # B X C X N
+#
+#    out = torch.bmm(proj_value,attention.permute(0,2,1) )
+#    out = out.view(m_batchsize,C,width,height)
+#    
+#    out = self.gamma*out + x
+#    return out,attention
+
+
+def attention_2(self, x, ch, sn=False, scope='attention', reuse=False):
+    with tf.variable_scope(scope, reuse=reuse):
+        f = conv(x, ch // 8, kernel=1, stride=1, sn=sn, scope='f_conv') # [bs, h, w, c']
+        g = conv(x, ch // 8, kernel=1, stride=1, sn=sn, scope='g_conv') # [bs, h, w, c']
+        h = conv(x, ch, kernel=1, stride=1, sn=sn, scope='h_conv') # [bs, h, w, c]
+
+        # N = h * w
+        s = tf.matmul(hw_flatten(g), hw_flatten(f), transpose_b=True) # # [bs, N, N]
+
+        beta = tf.nn.softmax(s)  # attention map
+
+        o = tf.matmul(beta, hw_flatten(h)) # [bs, N, C]
+        gamma = tf.get_variable("gamma", [1], initializer=tf.constant_initializer(0.0))
+
+        o = tf.reshape(o, shape=x.shape) # [bs, h, w, C]
+        x = gamma * o + x
+
+    return x
+
 
 '''
 f_loss: function with as input the (x,y,reuse=False), and as output a list/tuple whose first element is the loss.
@@ -174,6 +218,10 @@ def model(sess, hps, train_iterator, test_iterator, data_init):
             # Encode
             z = Z.squeeze2d(z, 2)  # > 16x16x12
             z, objective, _ = encoder(z, objective)
+
+            # First attention layer over the independent encoded channels
+            pdb.set_trace()
+            z = attention_2(z, 12)
 
             # Prior
             hps.top_shape = Z.int_shape(z)[1:]
@@ -379,6 +427,11 @@ def revnet2d_step(name, z, logdet, hps, reverse):
                 logdet += tf.reduce_sum(tf.log(scale), axis=[1, 2, 3])
             else:
                 raise Exception()
+            
+            # Second attention layer over the flow transfermations
+            pdb.set_trace()
+            z1 = attention_2(z1, hps.width)
+            z2 = attention_2(z2, hps.width)
 
             z = tf.concat([z1, z2], 3)
 
