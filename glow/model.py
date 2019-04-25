@@ -7,6 +7,7 @@ import horovod.tensorflow as hvd
 from tensorflow.contrib.framework.python.ops import add_arg_scope
 
 import attention
+import pdb
 
 # TODO convert this to tensorflow
 #def attention_1(self,x):
@@ -30,22 +31,54 @@ import attention
 #    out = self.gamma*out + x
 #    return out,attention
 
+weight_init = tf.random_normal_initializer(mean=0.0, stddev=0.02)
+weight_regularizer = None
 
-def attention_2(self, x, ch, sn=False, scope='attention', reuse=False):
+def hw_flatten(x) :
+    pdb.set_trace()
+    return tf.reshape(x, shape=[x.shape[0], -1, x.shape[-1]])
+
+
+def conv(x, channels, kernel=4, stride=2, pad=0, pad_type='zero', use_bias=True, sn=False, scope='conv_0'):
+    with tf.variable_scope(scope):
+        if pad_type == 'zero' :
+            x = tf.pad(x, [[0, 0], [pad, pad], [pad, pad], [0, 0]])
+        if pad_type == 'reflect' :
+            x = tf.pad(x, [[0, 0], [pad, pad], [pad, pad], [0, 0]], mode='REFLECT')
+
+        if sn :
+            w = tf.get_variable("kernel", shape=[kernel, kernel, x.get_shape()[-1], channels], initializer=weight_init,
+                                regularizer=weight_regularizer)
+            x = tf.nn.conv2d(input=x, filter=spectral_norm(w),
+                             strides=[1, stride, stride, 1], padding='VALID')
+            if use_bias :
+                bias = tf.get_variable("bias", [channels], initializer=tf.constant_initializer(0.0))
+                x = tf.nn.bias_add(x, bias)
+
+        else :
+            x = tf.layers.conv2d(inputs=x, filters=channels,
+                                 kernel_size=kernel, kernel_initializer=weight_init,
+                                 kernel_regularizer=weight_regularizer,
+                                 strides=stride, use_bias=use_bias)
+        return x
+
+
+def attention_2(x, ch, sn=False, scope='attention', reuse=False):
     with tf.variable_scope(scope, reuse=reuse):
-        f = conv(x, ch // 8, kernel=1, stride=1, sn=sn, scope='f_conv') # [bs, h, w, c']
-        g = conv(x, ch // 8, kernel=1, stride=1, sn=sn, scope='g_conv') # [bs, h, w, c']
+        f = conv(x, ch, kernel=1, stride=1, sn=sn, scope='f_conv') # [bs, h, w, c']
+        g = conv(x, ch, kernel=1, stride=1, sn=sn, scope='g_conv') # [bs, h, w, c']
         h = conv(x, ch, kernel=1, stride=1, sn=sn, scope='h_conv') # [bs, h, w, c]
 
         # N = h * w
-        s = tf.matmul(hw_flatten(g), hw_flatten(f), transpose_b=True) # # [bs, N, N]
+        #pdb.set_trace()
+        s = tf.matmul(g, f, transpose_b=True) # # [bs, N, N]
 
         beta = tf.nn.softmax(s)  # attention map
 
-        o = tf.matmul(beta, hw_flatten(h)) # [bs, N, C]
+        o = tf.matmul(beta, h) # [bs, N, C]
         gamma = tf.get_variable("gamma", [1], initializer=tf.constant_initializer(0.0))
 
-        o = tf.reshape(o, shape=x.shape) # [bs, h, w, C]
+        #o = tf.reshape(o, shape=x.shape) # [bs, h, w, C]
         x = gamma * o + x
 
     return x
@@ -220,8 +253,8 @@ def model(sess, hps, train_iterator, test_iterator, data_init):
             z, objective, _ = encoder(z, objective)
 
             # First attention layer over the independent encoded channels
-            pdb.set_trace()
-            z = attention_2(z, 12)
+            #pdb.set_trace()
+            z = attention_2(z, z.shape[3], scope="att0")
 
             # Prior
             hps.top_shape = Z.int_shape(z)[1:]
@@ -429,9 +462,9 @@ def revnet2d_step(name, z, logdet, hps, reverse):
                 raise Exception()
             
             # Second attention layer over the flow transfermations
-            pdb.set_trace()
-            z1 = attention_2(z1, hps.width)
-            z2 = attention_2(z2, hps.width)
+            #pdb.set_trace()
+            z1 = attention_2(z1, z1.shape[3], scope="att1")
+            z2 = attention_2(z2, z2.shape[3], scope="att2")
 
             z = tf.concat([z1, z2], 3)
 
