@@ -205,6 +205,7 @@ class GaussianPrior(Layer):
         mean, logsd = torch.chunk(mean_and_logsd, 2, dim=1)
 
         pz = gaussian_diag(mean, logsd)
+        #pdb.set_trace()
         objective += pz.logp(x) 
 
         # this way, you can encode and decode back the same image. 
@@ -363,6 +364,50 @@ class RevNetStep(LayerList):
         self.layers = nn.ModuleList(layers)
 
 
+class Self_Attn(nn.Module):
+    """ Self attention Layer"""
+    def __init__(self, in_dim, activation):
+        super(Self_Attn,self).__init__()
+        self.chanel_in = in_dim
+        self.activation = activation
+        
+        self.query_conv = nn.Conv2d(in_channels = in_dim, out_channels = in_dim//8, kernel_size= 1)
+        self.key_conv = nn.Conv2d(in_channels = in_dim, out_channels = in_dim//8, kernel_size= 1)
+        self.value_conv = nn.Conv2d(in_channels = in_dim, out_channels = in_dim, kernel_size= 1)
+        self.gamma = nn.Parameter(torch.zeros(1))
+
+        self.softmax = nn.Softmax(dim=-1) #
+
+    def forward_(self, x, obj):
+        """
+            inputs :
+                x : input feature maps( B X C X W X H)
+            returns :
+                out : self attention value + input feature 
+                attention: B X N X N (N is Width*Height)
+        """
+        m_batchsize, C, width, height = x.size()
+        proj_query = self.query_conv(x).view(m_batchsize, -1, width * height).permute(0,2,1) # B X CX(N)
+        proj_key = self.key_conv(x).view(m_batchsize, -1, width * height) # B X C x (*W*H)
+        energy = torch.bmm(proj_query, proj_key) # transpose check
+        attention = self.softmax(energy) # BX (N) X (N) 
+        proj_value = self.value_conv(x).view(m_batchsize, -1, width * height) # B X C X N
+
+        out = torch.bmm(proj_value, attention.permute(0,2,1))
+        out = out.view(m_batchsize, C, width, height)
+        
+        out = self.gamma * out + x
+        #pdb.set_trace()
+        #return out, attention
+        return out, obj
+
+    def reverse_(self, x, obj):
+        #pdb.set_trace()
+        # TODO Need to implement the reverse flow for Glow network??
+
+        return x, obj
+
+
 # Full model
 class Glow_(LayerList, nn.Module):
     def __init__(self, input_shape, args):
@@ -387,13 +432,17 @@ class Glow_(LayerList, nn.Module):
                 C = C // 2
                 output_shapes += [(-1, C, H, W)]
 
+        # Self attention layer
+        #pdb.set_trace()
+        #layers += [Self_Attn(48, 'relu')]
+
         layers += [GaussianPrior((args.batch_size, C, H, W), args)]
         output_shapes += [output_shapes[-1]]
         
         self.layers = nn.ModuleList(layers)
         self.output_shapes = output_shapes
         self.args = args
-        self.flatten()
+        #self.flatten()
 
     def forward(self, *inputs):
         return self.forward_(*inputs)

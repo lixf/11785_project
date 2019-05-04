@@ -124,7 +124,7 @@ for epoch in range(start_epoch, args.n_epochs):
             grid = utils.make_grid(sample)
             utils.save_image(grid, './out/samples/cifar_Test_{}_{}.png'.format(epoch, i // args.print_every))
 
-        print('iteration took {:.4f}'.format(time.time() - t))
+        #print('iteration took {:.4f}'.format(time.time() - t))
         
     # test loop
     # --------------------------------------------------------------------------
@@ -154,15 +154,15 @@ for epoch in range(start_epoch, args.n_epochs):
 
             sample = model.module.sample()
             grid = utils.make_grid(sample)
-            utils.save_image(grid, '../glow/samples/cifar_Test_{}.png'.format(epoch))
+            utils.save_image(grid, './out/samples/cifar_Test_{}.png'.format(epoch))
 
             # reconstruct
             x_hat = model.module.reverse_(z, objective)[0]
             grid = utils.make_grid(x_hat)
-            utils.save_image(grid, '../glow/samples/cifar_Test_Recon{}.png'.format(epoch))
+            utils.save_image(grid, './out/samples/cifar_Test_Recon{}.png'.format(epoch))
         
             grid = utils.make_grid(last_img)
-            utils.save_image(grid, '../glow/samples/cifar_Test_Target.png')
+            utils.save_image(grid, './out/samples/cifar_Test_Target.png')
 
 
     if (epoch + 1) % args.save_every == 0: 
