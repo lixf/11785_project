@@ -89,7 +89,8 @@ for epoch in range(start_epoch, args.n_epochs):
     avg_train_bits_x = 0.
     num_batches = len(train_loader)
     for i, (img, label) in enumerate(train_loader):
-        # if i > 10 : break
+        #if i > 1 : break
+        
         
         t = time.time()
         img = img.cuda() 
@@ -118,6 +119,7 @@ for epoch in range(start_epoch, args.n_epochs):
         for pg in optim.param_groups: pg['lr'] = new_lr
 
         if (i + 1) % args.print_every == 0: 
+            print('epoch %s, batch_num %s' % (epoch, i))
             print('avg train bits per pixel {:.4f}'.format(avg_train_bits_x / args.print_every))
             avg_train_bits_x = 0.
             sample = model.module.sample()
@@ -157,6 +159,7 @@ for epoch in range(start_epoch, args.n_epochs):
             utils.save_image(grid, './out/samples/cifar_Test_{}.png'.format(epoch))
 
             # reconstruct
+            pdb.set_trace()
             x_hat = model.module.reverse_(z, objective)[0]
             grid = utils.make_grid(x_hat)
             utils.save_image(grid, './out/samples/cifar_Test_Recon{}.png'.format(epoch))

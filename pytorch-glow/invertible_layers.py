@@ -314,6 +314,7 @@ class ActNorm(Layer):
         output = (input + b) * torch.exp(logs)
         dlogdet = torch.sum(logs) * input.size(-1) # c x h  
 
+        #pdb.set_trace()
         return output.view(input_shape), objective + dlogdet
 
     def reverse_(self, input, objective):
@@ -325,6 +326,7 @@ class ActNorm(Layer):
         output = input * torch.exp(-logs) - b
         dlogdet = torch.sum(logs) * input.size(-1) # c x h  
 
+        #pdb.set_trace()
         return output.view(input_shape), objective - dlogdet
 
 # (Note: a BatchNorm layer can be found in previous commits)
@@ -397,15 +399,25 @@ class Self_Attn(nn.Module):
         out = out.view(m_batchsize, C, width, height)
         
         out = self.gamma * out + x
-        #pdb.set_trace()
         #return out, attention
         return out, obj
 
     def reverse_(self, x, obj):
         #pdb.set_trace()
         # TODO Need to implement the reverse flow for Glow network??
+        m_batchsize, C, width, height = x.size()
+        proj_query = self.query_conv(x).view(m_batchsize, -1, width * height).permute(0,2,1) # B X CX(N)
+        proj_key = self.key_conv(x).view(m_batchsize, -1, width * height) # B X C x (*W*H)
+        energy = torch.bmm(proj_query, proj_key) # transpose check
+        attention = self.softmax(energy) # BX (N) X (N) 
+        proj_value = self.value_conv(x).view(m_batchsize, -1, width * height) # B X C X N
 
-        return x, obj
+        out = torch.bmm(proj_value, attention.permute(0,2,1))
+        out = out.view(m_batchsize, C, width, height)
+        
+        out = x - self.gamma * out
+
+        return out, obj
 
 
 # Full model
@@ -434,7 +446,7 @@ class Glow_(LayerList, nn.Module):
 
         # Self attention layer
         #pdb.set_trace()
-        #layers += [Self_Attn(48, 'relu')]
+        layers += [Self_Attn(48, 'relu')]
 
         layers += [GaussianPrior((args.batch_size, C, H, W), args)]
         output_shapes += [output_shapes[-1]]
